@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Мяу-пианино Ultra</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; }
+  canvas { display: block; margin: 0 auto; background: #222; }
+</style>
+</head>
+<body>
+<canvas id="game" width="480" height="640"></canvas>
+<script>
+const ctx = document.getElementById('game').getContext('2d');
+function loop() {
+  ctx.clearRect(0, 0, 480, 640);
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
