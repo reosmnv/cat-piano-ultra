@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Пробник мяу</title>
+<style>
+  body { font: 16px system-ui, sans-serif; background: #1b1b22; color: #eee; margin: 0; padding: 12px; }
+  h1 { font-size: 20px; margin: 4px 0 10px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+  button { font: inherit; padding: 10px 14px; border: 0; border-radius: 10px; background: #3b3b4d; color: #fff; }
+  button.on { background: #e0679c; }
+  .row { background: #25252f; border-radius: 12px; padding: 10px; margin-bottom: 8px; }
+  .row b { display: block; margin-bottom: 4px; }
+  .row small { color: #aaa; }
+  .row .btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  #hint { color: #aaa; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>🐱 Пробник мяу</h1>
+<div id="hint">Нажми «Старт», потом слушай. «Как есть» играет файл без обработки, «Гамма» играет до-мажор вверх (питч меняется через playbackRate, как в игре), «−12…+12» сдвиг в полутонах.</div>
+<div class="bar"><button id="start">▶ Старт</button> Громкость <input type="range" id="vol" min="0" max="1" step="0.05" value="0.8"></div>
+<div id="list"></div>
+<script>
+const SAMPLES = [
+  { name: 'G1 чистое милое мяу', url: 'assets/sfx-test/a-single-clear-cute-cat-meow-one-short-n-cmvcxakk.mp3' },
+  { name: 'G2 котёнок, высокое', url: 'assets/sfx-test/a-kitten-meow-high-pitched-short-single-cmvcxam3.mp3' },
+  { name: 'G3 мультяшное, тянущееся', url: 'assets/sfx-test/a-cartoon-cat-meow-musical-sustained-ton-cmvcxann.mp3' },
+  { name: 'G4 мягкое мелодичное', url: 'assets/sfx-test/a-soft-melodic-cat-meow-with-a-smooth-pi-cmvcxap5.mp3' },
+  { name: 'G5 низкое взрослого кота', url: 'assets/sfx-test/a-deep-adult-cat-meow-low-pitch-single-m-cmvcxaql.mp3' },
+  { name: 'G6 электронное', url: 'assets/sfx-test/a-synthesized-electronic-meow-sound-game-cmvcxat3.mp3' },
+  { name: 'CC0 m1 (из первой версии)', url: 'assets/cc0-ref/m1.wav' },
+  { name: 'CC0 m2 (из первой версии)', url: 'assets/cc0-ref/m2.wav' },
+  { name: 'CC0 m3 (из первой версии)', url: 'assets/cc0-ref/m3.wav' },
+];
+const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const noteName = hz => { const m = Math.round(69 + 12 * Math.log2(hz / 440)); return NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1); };
+let ctx = null, master = null;
+
+function ensureCtx() {
+  if (!ctx) {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    master = ctx.createGain(); master.gain.value = +document.getElementById('vol').value; master.connect(ctx.destination);
+  }
+  if (navigator.audioSession) navigator.audioSession.type = 'playback'; // iPhone: звук и при беззвучном режиме
+  if (ctx.state !== 'running') ctx.resume();
+}
+
+// Грубая оценка основного тона: автокорреляция по самому громкому окну 80 мс (16 кГц, 150–1500 Гц)
+function estimateHz(buf) {
+  const sr = buf.sampleRate, x = buf.getChannelData(0), w = Math.round(sr * 0.08);
+  let best = 0, at = 0;
+  for (let i = 0; i + w < x.length; i += w >> 2) { let e = 0; for (let j = 0; j < w; j++) e += x[i + j] ** 2; if (e > best) { best = e; at = i; } }
+  const lagMin = Math.floor(sr / 1500), lagMax = Math.floor(sr / 150);
+  let bestC = 0, bestLag = 0;
+  for (let lag = lagMin; lag <= lagMax; lag++) {
+    let c = 0, n = 0, a = 0, b = 0;
+    for (let j = 0; j + lag < w; j++) { const p = x[at + j], q = x[at + j + lag]; c += p * q; a += p * p; b += q * q; n++; }
+    const r = c / Math.sqrt(a * b + 1e-12);
+    if (r > bestC) { bestC = r; bestLag = lag; }
+  }
+  return bestLag ? { hz: sr / bestLag, conf: bestC } : null;
+}
+
+function play(s, semis, when) {
+  ensureCtx();
+  if (!s.buf) return;
+  const src = ctx.createBufferSource(); src.buffer = s.buf;
+  src.playbackRate.value = Math.pow(2, semis / 12);
+  src.connect(master); src.start(when || 0);
+}
+
+const list = document.getElementById('list');
+SAMPLES.forEach(s => {
+  const row = document.createElement('div'); row.className = 'row';
+  row.innerHTML = '<b>' + s.name + '</b><small class="info">загрузка…</small><div class="btns"></div>';
+  const btns = row.querySelector('.btns');
+  const add = (label, fn) => { const b = document.createElement('button'); b.textContent = label; b.addEventListener('click', fn); btns.appendChild(b); };
+  add('Как есть', () => play(s, 0));
+  add('Гамма ↑', () => { ensureCtx(); [0,2,4,5,7,9,11,12].forEach((d, i) => play(s, d, ctx.currentTime + i * 0.45)); });
+  [-12, -7, -3, +3, +7, +12].forEach(d => add((d > 0 ? '+' : '') + d, () => play(s, d)));
+  list.appendChild(row);
+  s.info = row.querySelector('.info');
+});
+document.getElementById('vol').addEventListener('input', e => { if (master) master.gain.value = +e.target.value; });
+
+// Загрузка и анализ сразу после «Старт» (контекст создаётся по жесту)
+document.getElementById('start').addEventListener('click', async () => {
+  ensureCtx();
+  document.getElementById('start').classList.add('on');
+  for (const s of SAMPLES) {
+    if (s.buf) continue;
+    try {
+      const a = await (await fetch(s.url)).arrayBuffer();
+      s.buf = await new Promise((ok, err) => ctx.decodeAudioData(a, ok, err));
+      const f = estimateHz(s.buf);
+      s.info.textContent = s.buf.duration.toFixed(2) + ' с' + (f ? ' · тон ≈ ' + Math.round(f.hz) + ' Гц (' + noteName(f.hz) + ', уверенность ' + f.conf.toFixed(2) + ')' : '');
+    } catch (e) { s.info.textContent = 'не загрузилось: ' + e; }
+  }
+});
+</script>
+</body>
+</html>
