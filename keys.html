@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Мяу-пианино · подбор звуков</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  html, body { margin: 0; background: #14121c; color: #eee; font: 15px system-ui, sans-serif; }
+  body { padding: 10px 10px 30px; }
+  h1 { font-size: 18px; margin: 4px 0 8px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
+  button { font: inherit; padding: 9px 12px; border: 0; border-radius: 10px; background: #3b3750; color: #fff; }
+  button.on { outline: 2px solid #fff; }
+  .hint { color: #9a9ab0; font-size: 13px; line-height: 1.35; }
+  #kbWrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 10px -10px; padding: 0 10px; }
+  #kb { position: relative; height: 190px; }
+  .w, .b { position: absolute; top: 0; border-radius: 0 0 8px 8px; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; user-select: none; -webkit-user-select: none; font-size: 11px; }
+  .w { width: 46px; height: 190px; background: #f3efe6; color: #333; border: 1px solid #0007; padding-bottom: 6px; }
+  .b { width: 32px; height: 115px; background: #26232f; color: #ddd; z-index: 2; padding-bottom: 5px; font-size: 10px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; margin-bottom: 4px; border: 1px solid #0005; }
+  .w.down { background: #ffd1e3; } .b.down { background: #6a4b63; }
+  .sel { box-shadow: inset 0 -5px 0 #e0679c; }
+  #pick { background: #1d1a2a; border-radius: 12px; padding: 10px; margin-top: 6px; }
+  #pick .opt { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+  #pick .opt button:first-child { min-width: 54px; }
+  #code { width: 100%; height: 60px; background: #0d0c12; color: #cfc; border: 1px solid #333; border-radius: 8px; font: 12px ui-monospace, monospace; }
+  #start { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: #14121cf2; z-index: 9; text-align: center; padding: 20px; }
+  #start button { font-size: 20px; padding: 14px 26px; background: #e0679c; }
+  #status { color: #9a9ab0; font-size: 12px; }
+  #status.err { color: #ff8a8a; }
+</style>
+</head>
+<body>
+<div id="start">
+  <div style="font-size:42px">🐱🎹</div>
+  <div>Подбор мяу для каждой клавиши</div>
+  <button id="go">Включить звук</button>
+  <div class="hint">На iPhone звук идёт и в беззвучном режиме. Если тишина, проверь громкость.</div>
+</div>
+
+<h1>🐱 Подбор мяу по клавишам</h1>
+<div class="hint">1) Вариант для всех клавиш. 2) Нажимай клавиши, слушай. 3) Не нравится клавиша: выбери её и прослушай 4 варианта ниже. 4) Отправь код выбора.</div>
+
+<div class="row" id="vars"></div>
+
+<div id="kbWrap"><div id="kb"></div></div>
+
+<div id="pick"></div>
+
+<div class="row">
+  <button id="scale">Гамма ↑</button>
+  <button id="ph1">Фраза: начало соло</button>
+  <button id="ph2">Фраза: 40-я секунда</button>
+  <button id="stop">■</button>
+</div>
+<div class="row">
+  <button id="short" class="on">Короткие ноты</button>
+  <button id="echo" class="on">Эхо</button>
+  <span class="hint">«Короткие ноты»: мяу обрезается по длине ноты, как будет в игре.</span>
+</div>
+
+<div class="row"><b>Код выбора</b> <button id="copy">Скопировать</button> <button id="reset">Сбросить</button></div>
+<textarea id="code" readonly></textarea>
+<div id="status">v1 · звук не включён</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const VARS = {
+  p: { name: 'Клип · PSOLA', color: '#e0679c', about: 'Кошка из твоего файла. Высота меняется, длина и тембр как в оригинале, лёгкое «мяу»-скольжение в начале и конце.' },
+  h: { name: 'Клип · гибрид', color: '#f0a64a', about: 'Тот же звук, но на верхних нотах голос «молодеет», ближе к котёнку.' },
+  r: { name: 'Клип · как раньше', color: '#7a7a90', about: 'Простое ускорение записи (как было в игре). Вверху короче и пискливее. Для сравнения.' },
+  g: { name: 'ИИ-мяу ровное', color: '#5bb5e8', about: 'Лучшие из сгенерированных мяу, выровненные по высоте. Другая кошка, длиннее.' },
+};
+const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const RU = { C: 'до', D: 'ре', E: 'ми', F: 'фа', G: 'соль', A: 'ля', B: 'си' };
+const LO = 57, HI = 83;
+const KEYS = []; for (let m = LO; m <= HI; m++) KEYS.push(m);
+const isBlack = m => NAMES[m % 12].length > 1;
+const label = m => NAMES[m % 12] + (Math.floor(m / 12) - 1);
+// фразы из соло: [midi, время с, длительность с]
+const PH1 = [[57,0.05,0.2],[66,0.264,0.41],[69,0.669,0.2],[71,0.869,0.2],[69,2.27,0.2],[71,2.47,0.2],[64,2.67,0.81],[62,3.47,0.2],[64,3.67,0.2],[66,3.871,0.2],[62,4.071,0.2],[58,4.271,0.81],[59,5.071,0.14],[62,5.204,0.14],[59,5.338,0.14],[57,5.471,1.6],[54,7.372,0.05],[59,7.422,0.05],[62,7.472,0.2],[64,7.672,0.2],[66,7.872,0.2],[62,8.072,0.2],[59,8.272,0.2],[58,8.472,0.2],[59,8.672,0.41],[62,9.072,0.2],[64,9.273,0.2],[66,9.473,0.2],[62,9.673,0.2],[59,9.873,0.2],[57,10.073,0.2],[59,10.273,0.2],[57,10.473,0.2],[69,10.673,0.41],[74,11.073,0.2],[69,11.273,0.41],[66,11.673,0.2],[69,11.873,0.2],[67,12.074,0.2]];
+const PH2 = [[74,0.132,0.41],[76,0.532,0.2],[74,0.732,0.2],[76,0.932,0.41],[81,1.333,0.2],[76,1.537,0.41],[74,1.954,0.2],[76,2.163,0.2],[74,2.372,0.2],[76,2.58,0.2],[79,2.789,0.2],[80,2.997,0.2],[81,3.206,0.1],[81,3.31,0.1],[83,3.415,0.2],[76,3.623,0.61],[74,4.249,0.81],[76,5.084,0.41],[76,5.71,0.1],[74,5.814,0.1],[76,5.918,0.61],[81,6.544,0.41],[81,6.962,0.2],[76,7.17,0.41],[76,7.587,0.81]];
+
+let ctx = null, out = null, wet = null, buf = {}, sel = 69, playing = [];
+let choice = {};
+try { choice = JSON.parse(localStorage.getItem('meowKeys') || '{}'); } catch (e) {}
+for (const m of KEYS) if (!VARS[choice[m]]) choice[m] = 'p';
+let opts = { short: true, echo: true };
+
+function status(t, err) { const s = $('status'); s.textContent = 'v1 · ' + t; s.className = err ? 'err' : ''; }
+window.addEventListener('error', e => status('ошибка: ' + e.message, true));
+
+function save() {
+  localStorage.setItem('meowKeys', JSON.stringify(choice));
+  $('code').value = 'KEYS:' + KEYS.map(m => label(m) + '=' + choice[m]).join(' ');
+}
+
+// ---- клавиатура ----
+function drawKb() {
+  const kb = $('kb'); kb.innerHTML = '';
+  let x = 0;
+  for (const m of KEYS) {
+    const el = document.createElement('div');
+    el.dataset.m = m;
+    if (isBlack(m)) { el.className = 'b'; el.style.left = (x - 16) + 'px'; }
+    else { el.className = 'w'; el.style.left = x + 'px'; x += 46; }
+    const n = NAMES[m % 12];
+    el.innerHTML = `<div class="dot" style="background:${VARS[choice[m]].color}"></div>${isBlack(m) ? n : (RU[n] + '<br>' + label(m))}`;
+    if (m === sel) el.classList.add('sel');
+    kb.appendChild(el);
+  }
+  kb.style.width = x + 'px';
+}
+$('kb').addEventListener('pointerdown', e => {
+  const el = e.target.closest('[data-m]'); if (!el) return;
+  e.preventDefault();
+  const m = +el.dataset.m;
+  play(m, choice[m]);
+  el.classList.add('down'); setTimeout(() => el.classList.remove('down'), 160);
+  if (sel !== m) { sel = m; drawKb(); drawPick(); }
+});
+
+function drawVars() {
+  const box = $('vars'); box.innerHTML = '<b>Всем клавишам:</b>';
+  for (const [k, v] of Object.entries(VARS)) {
+    const b = document.createElement('button');
+    b.textContent = v.name; b.style.background = v.color;
+    b.onclick = () => { for (const m of KEYS) choice[m] = k; save(); drawKb(); drawPick(); playScale(); };
+    box.appendChild(b);
+  }
+}
+function drawPick() {
+  const p = $('pick');
+  p.innerHTML = `<b>Клавиша ${label(sel)} (${RU[NAMES[sel % 12][0]]}${isBlack(sel) ? '♯' : ''})</b> · ▶ послушать, ✓ выбрать`;
+  for (const [k, v] of Object.entries(VARS)) {
+    const d = document.createElement('div'); d.className = 'opt';
+    const on = choice[sel] === k;
+    d.innerHTML = `<button style="background:${v.color}">▶</button><button class="${on ? 'on' : ''}">${on ? '✓ выбрано' : 'выбрать'}</button><span class="hint"><b>${v.name}</b>. ${v.about}</span>`;
+    d.children[0].onclick = () => play(sel, k);
+    d.children[1].onclick = () => { choice[sel] = k; save(); drawKb(); drawPick(); play(sel, k); };
+    p.appendChild(d);
+  }
+}
+
+// ---- звук ----
+function makeIR() {
+  const len = Math.floor(ctx.sampleRate * 1.2), ir = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
+  return ir;
+}
+async function init() {
+  if (navigator.audioSession) navigator.audioSession.type = 'playback';
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state !== 'running') await ctx.resume();
+  out = ctx.createGain(); out.gain.value = 0.9;
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7000;
+  out.connect(lp); lp.connect(ctx.destination);
+  const conv = ctx.createConvolver(); conv.buffer = makeIR();
+  wet = ctx.createGain(); wet.gain.value = 0.18;
+  out.connect(conv); conv.connect(wet); wet.connect(ctx.destination);
+  const list = []; for (const k of Object.keys(VARS)) for (const m of KEYS) list.push([k, m]);
+  let done = 0;
+  await Promise.all(list.map(async ([k, m]) => {
+    const r = await fetch(`assets/keys/${k}${m}.wav`);
+    if (!r.ok) throw new Error(`${k}${m}.wav: ${r.status}`);
+    const ab = await r.arrayBuffer();
+    buf[k + m] = await new Promise((ok, bad) => ctx.decodeAudioData(ab, ok, bad));
+    status(`загрузка ${++done}/${list.length}`);
+  }));
+  status('готово · ' + Object.keys(buf).length + ' звуков');
+}
+function play(m, k, when = 0, dur = 0) {
+  if (!ctx) return;
+  const b = buf[k + m]; if (!b) return;
+  const t = Math.max(ctx.currentTime, when || ctx.currentTime);
+  const s = ctx.createBufferSource(); s.buffer = b;
+  const g = ctx.createGain(); g.gain.value = 1;
+  s.connect(g); g.connect(out);
+  let len = b.duration;
+  if (dur && opts.short) {
+    len = Math.min(b.duration, Math.max(dur, 0.12) + 0.06);
+    g.gain.setValueAtTime(1, t + len - 0.06);
+    g.gain.linearRampToValueAtTime(0, t + len);
+  }
+  s.start(t); s.stop(t + len + 0.01);
+  playing.push(s);
+  s.onended = () => { playing = playing.filter(x => x !== s); };
+}
+function stopAll() { for (const s of playing) try { s.stop(); } catch (e) {} playing = []; }
+function playScale() {
+  stopAll(); const t0 = ctx.currentTime + 0.05; let i = 0;
+  for (const m of KEYS) if (!isBlack(m)) play(m, choice[m], t0 + 0.32 * i++, 0.3);
+}
+function playPhrase(ph) {
+  stopAll(); const t0 = ctx.currentTime + 0.08;
+  for (const [m, t, d] of ph) { let k = m; while (k < LO) k += 12; k = Math.min(HI, k); play(k, choice[k], t0 + t, d); }
+}
+
+$('go').onclick = async () => {
+  $('go').disabled = true; $('go').textContent = 'Загружаю…';
+  try { await init(); $('start').style.display = 'none'; play(69, choice[69]); }
+  catch (e) { status('ошибка: ' + e.message, true); $('go').disabled = false; $('go').textContent = 'Ещё раз'; }
+};
+$('scale').onclick = playScale;
+$('ph1').onclick = () => playPhrase(PH1);
+$('ph2').onclick = () => playPhrase(PH2);
+$('stop').onclick = stopAll;
+$('short').onclick = e => { opts.short = !opts.short; e.target.classList.toggle('on', opts.short); };
+$('echo').onclick = e => { opts.echo = !opts.echo; e.target.classList.toggle('on', opts.echo); if (wet) wet.gain.value = opts.echo ? 0.18 : 0; };
+$('copy').onclick = async () => { try { await navigator.clipboard.writeText($('code').value); status('код скопирован'); } catch (e) { $('code').select(); status('выдели текст и скопируй вручную'); } };
+$('reset').onclick = () => { for (const m of KEYS) choice[m] = 'p'; save(); drawKb(); drawPick(); };
+
+drawVars(); drawKb(); drawPick(); save();
+</script>
+</body>
