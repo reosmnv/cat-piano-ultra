@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Мяу-синтезатор</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  html, body { margin: 0; background: #14121c; color: #eee; font: 15px system-ui, sans-serif; }
+  body { padding: 10px 10px 30px; }
+  h1 { font-size: 18px; margin: 4px 0 8px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
+  button { font: inherit; padding: 9px 12px; border: 0; border-radius: 10px; background: #3b3750; color: #fff; }
+  button.on { background: #e0679c; }
+  .hint { color: #9a9ab0; font-size: 13px; line-height: 1.35; }
+  #kbWrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 10px -10px; padding: 0 10px; }
+  #kb { position: relative; height: 170px; }
+  .w, .b { position: absolute; top: 0; border-radius: 0 0 8px 8px; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; user-select: none; -webkit-user-select: none; font-size: 11px; }
+  .w { width: 46px; height: 170px; background: #f3efe6; color: #333; border: 1px solid #0007; padding-bottom: 6px; }
+  .b { width: 32px; height: 100px; background: #26232f; color: #ddd; z-index: 2; padding-bottom: 5px; font-size: 10px; }
+  .w.down { background: #ffd1e3; } .b.down { background: #6a4b63; }
+  #knobs { display: grid; grid-template-columns: 1fr; gap: 4px 14px; background: #1d1a2a; border-radius: 12px; padding: 10px; }
+  @media (min-width: 700px) { #knobs { grid-template-columns: 1fr 1fr; } }
+  #knobs label { display: grid; grid-template-columns: 130px 1fr 44px; gap: 8px; align-items: center; font-size: 13px; }
+  #knobs input { width: 100%; }
+  #code { width: 100%; height: 54px; background: #0d0c12; color: #cfc; border: 1px solid #333; border-radius: 8px; font: 12px ui-monospace, monospace; }
+  #start { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: #14121cf2; z-index: 9; text-align: center; padding: 20px; }
+  #start button { font-size: 20px; padding: 14px 26px; background: #e0679c; }
+  #status { color: #9a9ab0; font-size: 12px; }
+  #status.err { color: #ff8a8a; }
+</style>
+</head>
+<body>
+<div id="start">
+  <div style="font-size:42px">🐱🎹</div>
+  <div>Синтезированное мяу: каждая нота точная, тембр крутится ползунками</div>
+  <button id="go">Включить звук</button>
+  <div class="hint">На iPhone звук идёт и в беззвучном режиме. Если тишина, проверь громкость.</div>
+</div>
+
+<h1>🐱 Мяу-синтезатор</h1>
+<div class="hint">Выбери характер, нажимай клавиши, слушай фразы. Подкрути ползунки, пока не понравится, и пришли код настроек.</div>
+
+<div class="row" id="presets"></div>
+
+<div id="kbWrap"><div id="kb"></div></div>
+
+<div class="row">
+  <button id="scale">Гамма ↑</button>
+  <button id="ph1">Начало соло</button>
+  <button id="ph2">40-я секунда</button>
+  <button id="ph1s">Начало соло + песня</button>
+  <button id="ph2s">40-я сек + песня</button>
+  <button id="stop">■</button>
+</div>
+
+<div id="knobs"></div>
+
+<div class="row"><b>Код настроек</b> <button id="copy">Скопировать</button></div>
+<textarea id="code" readonly></textarea>
+<div id="status">v1 · звук не включён</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const RU = { C: 'до', D: 'ре', E: 'ми', F: 'фа', G: 'соль', A: 'ля', B: 'си' };
+const LO = 57, HI = 83;
+const KEYS = []; for (let m = LO; m <= HI; m++) KEYS.push(m);
+const isBlack = m => NAMES[m % 12].length > 1;
+const label = m => NAMES[m % 12] + (Math.floor(m / 12) - 1);
+const m2f = m => 440 * Math.pow(2, (m - 69) / 12);
+
+// фразы из соло: [midi, время с, длительность с]; songAt = секунда в audio/solo-clip.mp3
+const PH1 = { songAt: 10.148, notes: [[57,0.05,0.2],[66,0.264,0.41],[69,0.669,0.2],[71,0.869,0.2],[69,2.27,0.2],[71,2.47,0.2],[64,2.67,0.81],[62,3.47,0.2],[64,3.67,0.2],[66,3.871,0.2],[62,4.071,0.2],[58,4.271,0.81],[59,5.071,0.14],[62,5.204,0.14],[59,5.338,0.14],[57,5.471,1.6],[54,7.372,0.05],[59,7.422,0.05],[62,7.472,0.2],[64,7.672,0.2],[66,7.872,0.2],[62,8.072,0.2],[59,8.272,0.2],[58,8.472,0.2],[59,8.672,0.41],[62,9.072,0.2],[64,9.273,0.2],[66,9.473,0.2],[62,9.673,0.2],[59,9.873,0.2],[57,10.073,0.2],[59,10.273,0.2],[57,10.473,0.2],[69,10.673,0.41],[74,11.073,0.2],[69,11.273,0.41],[66,11.673,0.2],[69,11.873,0.2],[67,12.074,0.2]] };
+const PH2 = { songAt: 50.3, notes: [[74,0.132,0.41],[76,0.532,0.2],[74,0.732,0.2],[76,0.932,0.41],[81,1.333,0.2],[76,1.537,0.41],[74,1.954,0.2],[76,2.163,0.2],[74,2.372,0.2],[76,2.58,0.2],[79,2.789,0.2],[80,2.997,0.2],[81,3.206,0.1],[81,3.31,0.1],[83,3.415,0.2],[76,3.623,0.61],[74,4.249,0.81],[76,5.084,0.41],[76,5.71,0.1],[74,5.814,0.1],[76,5.918,0.61],[81,6.544,0.41],[81,6.962,0.2],[76,7.17,0.41],[76,7.587,0.81]] };
+
+// ---- параметры звука ----
+const KNOBS = [
+  ['size',   'Размер кошки',      0.8, 2.0, 0.05, 'меньше = крупный кот/человек, больше = котёнок'],
+  ['soft',   'Мягкость тона',     0.6, 2.4, 0.05, 'больше = мягче, меньше = звонче'],
+  ['bright', 'Яркость',           1500, 9000, 100, 'верхние частоты'],
+  ['body',   'Чистая нота',       0, 1, 0.02, 'подмешать ровный тон, чтобы мелодия читалась'],
+  ['m',      'Длина «м»',         0.01, 0.12, 0.005, 'сек, закрытый рот в начале'],
+  ['i',      'Доля «и/я»',        0.05, 0.6, 0.01, 'часть ноты на «мя»'],
+  ['u',      'Доля «у» в конце',  0, 0.7, 0.01, 'часть ноты на «у»'],
+  ['scoop',  'Подъезд к ноте',    0, 4, 0.1, 'полутонов снизу в начале'],
+  ['fall',   'Спад в конце',      0, 5, 0.1, 'полутонов вниз в конце'],
+  ['vib',    'Вибрато',           0, 40, 1, 'центов'],
+  ['breath', 'Дыхание',           0, 1, 0.02, 'шум воздуха'],
+  ['minLen', 'Мин. длина мяу',    0.12, 0.6, 0.01, 'сек: короткие ноты тянутся до этого'],
+  ['echo',   'Эхо',               0, 0.6, 0.02, ''],
+  ['song',   'Громкость песни',   0, 1, 0.02, ''],
+];
+const PRESETS = {
+  'Котёнок':        { size: 1.65, soft: 1.3, bright: 6500, body: 0.25, m: 0.03, i: 0.3, u: 0.25, scoop: 1.5, fall: 2.0, vib: 14, breath: 0.15, minLen: 0.28, echo: 0.2, song: 0.5 },
+  'Мультяшный кот': { size: 1.35, soft: 1.0, bright: 5000, body: 0.35, m: 0.05, i: 0.2, u: 0.35, scoop: 2.5, fall: 3.0, vib: 18, breath: 0.1, minLen: 0.32, echo: 0.2, song: 0.5 },
+  'Певучее мяу':    { size: 1.2, soft: 1.6, bright: 4200, body: 0.5, m: 0.04, i: 0.15, u: 0.2, scoop: 0.8, fall: 1.0, vib: 22, breath: 0.05, minLen: 0.25, echo: 0.28, song: 0.5 },
+  'Мяу-голос':      { size: 1.0, soft: 1.4, bright: 5500, body: 0.3, m: 0.05, i: 0.18, u: 0.25, scoop: 0.6, fall: 0.8, vib: 20, breath: 0.12, minLen: 0.25, echo: 0.25, song: 0.5 },
+};
+let P = Object.assign({}, PRESETS['Котёнок']);
+try { const s = JSON.parse(localStorage.getItem('meowSynth') || 'null'); if (s) Object.assign(P, s); } catch (e) {}
+
+// ---- звук ----
+let ctx, master, wet, songBuf = null, songSrc = null, songGain, voices = [];
+let LIVE = null;
+function noiseFor(c) { const b = c.createBuffer(1, c.sampleRate, c.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return b; }
+
+// ---- выравнивание громкости по высоте: офлайн-рендер опорных нот текущей настройки ----
+const CAL_NOTES = [57, 63, 69, 75, 81, 83];
+let cal = CAL_NOTES.map(m => [m, 1]);
+async function measure(m) {
+  const sr = 44100, oc = new OfflineAudioContext(1, Math.floor(sr * 0.9), sr);
+  const g = oc.createGain(); g.connect(oc.destination);
+  meow(m2f(m), 0, 0.4, { c: oc, out: g, noise: noiseFor(oc), waves: {}, raw: true });
+  const x = (await oc.startRendering()).getChannelData(0);
+  let pk = 0, best = 0; const W = Math.floor(0.05 * sr);
+  for (const v of x) pk = Math.max(pk, Math.abs(v));
+  for (let i = 0; i + W < x.length; i += W) { let q = 0; for (let j = 0; j < W; j++) q += x[i + j] ** 2; best = Math.max(best, Math.sqrt(q / W)); }
+  return { pk, rms: best };
+}
+async function calibrate() {
+  const res = [];
+  for (const m of CAL_NOTES) { const r = await measure(m); res.push([m, Math.min(0.28 / (r.rms || 1), 0.8 / (r.pk || 1))]); }
+  cal = res;
+}
+function gainFor(f) {
+  const m = 69 + 12 * Math.log2(f / 440);
+  if (m <= cal[0][0]) return cal[0][1];
+  for (let i = 1; i < cal.length; i++) if (m <= cal[i][0]) { const [m0, g0] = cal[i - 1], [m1, g1] = cal[i]; return g0 + (g1 - g0) * (m - m0) / (m1 - m0); }
+  return cal[cal.length - 1][1];
+}
+let calTimer = 0;
+function recal() { clearTimeout(calTimer); calTimer = setTimeout(() => calibrate().catch(e => status('калибровка: ' + e.message, true)), 150); }
+function status(t, err) { const s = $('status'); s.textContent = 'v1 · ' + t; s.className = err ? 'err' : ''; }
+window.addEventListener('error', e => status('ошибка: ' + e.message, true));
+
+function wave(E, soft) {
+  const k = soft.toFixed(2), waves = E.waves; if (waves[k]) return waves[k];
+  const n = 40, re = new Float32Array(n), im = new Float32Array(n);
+  for (let i = 1; i < n; i++) im[i] = 1 / Math.pow(i, soft);
+  return (waves[k] = E.c.createPeriodicWave(re, im));
+}
+function init() {
+  if (navigator.audioSession) navigator.audioSession.type = 'playback';
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  ctx.resume();
+  const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4;
+  master = ctx.createGain(); master.gain.value = 0.8;
+  master.connect(comp); comp.connect(ctx.destination);
+  const len = Math.floor(ctx.sampleRate * 1.3), ir = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
+  const conv = ctx.createConvolver(); conv.buffer = ir;
+  wet = ctx.createGain(); master.connect(conv); conv.connect(wet); wet.connect(comp);
+  LIVE = { c: ctx, out: master, noise: noiseFor(ctx), waves: {} };
+  songGain = ctx.createGain(); songGain.connect(ctx.destination);
+  apply();
+  fetch('audio/solo-clip.mp3').then(r => { if (!r.ok) throw new Error('песня ' + r.status); return r.arrayBuffer(); })
+    .then(ab => new Promise((ok, bad) => ctx.decodeAudioData(ab, ok, bad)))
+    .then(b => { songBuf = b; status('готово · песня загружена'); })
+    .catch(e => status('песня не загрузилась: ' + e.message, true));
+}
+function apply() { if (wet) wet.gain.value = P.echo; if (songGain) songGain.gain.value = P.song; }
+
+// гласные: [F1, F2, F3] для «человеческого» размера, масштабируются P.size
+const V = { m: [280, 1700, 2600], i: [380, 2300, 3000], a: [850, 1450, 2650], u: [420, 950, 2500] };
+const FQ = [7, 11, 13], FG = [1.0, 0.55, 0.3];
+
+function meow(f, t, dur, E = LIVE) {
+  const c = E.c;
+  const D = Math.max(dur || 0, P.minLen);
+  const tM = t + P.m, tI = tM + D * P.i, tU = t + D * (1 - P.u), tE = t + D;
+  const src = c.createOscillator(); src.setPeriodicWave(wave(E, P.soft));
+  const fr = src.frequency;
+  fr.setValueAtTime(f * Math.pow(2, -P.scoop / 12), t);
+  fr.exponentialRampToValueAtTime(f, t + Math.min(0.09, D * 0.4));
+  fr.setValueAtTime(f, Math.max(t + 0.1, tU));
+  fr.exponentialRampToValueAtTime(f * Math.pow(2, -P.fall / 12), tE + 0.05);
+  const lfo = c.createOscillator(); lfo.frequency.value = 5.6;
+  const lg = c.createGain(); lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(0, t + 0.12);
+  lg.gain.linearRampToValueAtTime(f * (Math.pow(2, P.vib / 1200) - 1), t + 0.3);
+  lfo.connect(lg); lg.connect(fr);
+
+  const mix = c.createGain(); mix.gain.value = 1;
+  // форманты
+  for (let k = 0; k < 3; k++) {
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = FQ[k];
+    const s = P.size, q = bp.frequency;
+    q.setValueAtTime(V.m[k] * s, t);
+    q.linearRampToValueAtTime(V.i[k] * s, tM);
+    q.linearRampToValueAtTime(V.a[k] * s, tI);
+    q.setValueAtTime(V.a[k] * s, Math.max(tI, tU));
+    q.linearRampToValueAtTime(V.u[k] * s, tE);
+    const g = c.createGain(); g.gain.value = FG[k] * 3.2;
+    src.connect(bp); bp.connect(g); g.connect(mix);
+  }
+  // чистая нота
+  const lp0 = c.createBiquadFilter(); lp0.type = 'lowpass'; lp0.frequency.value = f * 2.2;
+  const bg = c.createGain(); bg.gain.value = P.body * 0.9;
+  src.connect(lp0); lp0.connect(bg); bg.connect(mix);
+  // дыхание
+  const ns = c.createBufferSource(); ns.buffer = E.noise; ns.loop = true;
+  const nf = c.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 2800 * P.size; nf.Q.value = 0.8;
+  const ng = c.createGain(); ng.gain.value = P.breath * 0.12;
+  ns.connect(nf); nf.connect(ng); ng.connect(mix);
+  // «рот»: закрыт на «м», открывается на гласной
+  const mouth = c.createBiquadFilter(); mouth.type = 'lowpass'; mouth.Q.value = 0.7;
+  mouth.frequency.setValueAtTime(500, t);
+  mouth.frequency.exponentialRampToValueAtTime(P.bright, tM + 0.03);
+  mouth.frequency.setValueAtTime(P.bright, Math.max(tM + 0.03, tU));
+  mouth.frequency.exponentialRampToValueAtTime(Math.max(700, P.bright * 0.35), tE);
+  const env = c.createGain(); const e = env.gain;
+  e.setValueAtTime(0, t); const G = E.raw ? 1 : gainFor(f);
+  e.linearRampToValueAtTime(0.35 * G, t + 0.012);
+  e.linearRampToValueAtTime(G, tM + 0.02);
+  e.setValueAtTime(G, Math.max(tM + 0.02, tU)); e.linearRampToValueAtTime(0.75 * G, tE);
+  e.linearRampToValueAtTime(0, tE + 0.07);
+  mix.connect(mouth); mouth.connect(env); env.connect(E.out);
+  const stop = tE + 0.1;
+  src.start(t); lfo.start(t); ns.start(t, Math.random() * 0.5);
+  src.stop(stop); lfo.stop(stop); ns.stop(stop);
+  if (E.raw) return;
+  voices.push(src, lfo, ns);
+  src.onended = () => { voices = voices.filter(v => v !== src && v !== lfo && v !== ns); };
+}
+function stopAll() {
+  for (const v of voices) try { v.stop(); } catch (e) {} voices = [];
+  if (songSrc) { try { songSrc.stop(); } catch (e) {} songSrc = null; }
+}
+function playScale() { stopAll(); const t0 = ctx.currentTime + 0.05; let i = 0; for (const m of KEYS) if (!isBlack(m)) meow(m2f(m), t0 + 0.32 * i++, 0.3); }
+function playPhrase(ph, withSong) {
+  stopAll(); const t0 = ctx.currentTime + 0.12;
+  if (withSong) {
+    if (!songBuf) { status('песня ещё грузится', true); return; }
+    songSrc = ctx.createBufferSource(); songSrc.buffer = songBuf; songSrc.connect(songGain);
+    songSrc.start(t0, ph.songAt, 13);
+  }
+  for (const [m, t, d] of ph.notes) { let k = m; while (k < LO) k += 12; meow(m2f(Math.min(HI, k)), t0 + t, d); }
+}
+
+// ---- интерфейс ----
+function drawKb() {
+  const kb = $('kb'); kb.innerHTML = ''; let x = 0;
+  for (const m of KEYS) {
+    const el = document.createElement('div'); el.dataset.m = m;
+    if (isBlack(m)) { el.className = 'b'; el.style.left = (x - 16) + 'px'; el.textContent = NAMES[m % 12]; }
+    else { el.className = 'w'; el.style.left = x + 'px'; x += 46; el.innerHTML = RU[NAMES[m % 12]] + '<br>' + label(m); }
+    kb.appendChild(el);
+  }
+  kb.style.width = x + 'px';
+}
+$('kb').addEventListener('pointerdown', e => {
+  const el = e.target.closest('[data-m]'); if (!el || !ctx) return;
+  e.preventDefault(); meow(m2f(+el.dataset.m), ctx.currentTime, 0);
+  el.classList.add('down'); setTimeout(() => el.classList.remove('down'), 160);
+});
+function drawKnobs() {
+  const box = $('knobs'); box.innerHTML = '';
+  for (const [k, name, lo, hi, st, hint] of KNOBS) {
+    const l = document.createElement('label'); l.title = hint;
+    l.innerHTML = `<span>${name}</span><input type="range" min="${lo}" max="${hi}" step="${st}" value="${P[k]}"><span>${(+P[k]).toFixed(st < 1 ? 2 : 0)}</span>`;
+    const inp = l.children[1];
+    inp.oninput = () => { P[k] = +inp.value; l.children[2].textContent = P[k].toFixed(st < 1 ? 2 : 0); apply(); save(); };
+    inp.onchange = () => { if (ctx && k !== 'song' && k !== 'echo') meow(m2f(69), ctx.currentTime, 0.4); };
+    box.appendChild(l);
+  }
+}
+function drawPresets() {
+  const box = $('presets'); box.innerHTML = '<b>Характер:</b>';
+  for (const name of Object.keys(PRESETS)) {
+    const b = document.createElement('button'); b.textContent = name;
+    b.onclick = () => { Object.assign(P, PRESETS[name]); drawKnobs(); apply(); save(); for (const x of box.querySelectorAll('button')) x.classList.toggle('on', x === b); if (ctx) playPhrase(PH2, false); };
+    box.appendChild(b);
+  }
+}
+function save() {
+  recal();
+  localStorage.setItem('meowSynth', JSON.stringify(P));
+  $('code').value = 'SYNTH:' + JSON.stringify(P);
+}
+
+$('go').onclick = () => {
+  try { init(); $('start').style.display = 'none'; status('звук включён · песня грузится…'); meow(m2f(69), ctx.currentTime + 0.05, 0.4); }
+  catch (e) { status('ошибка: ' + e.message, true); }
+};
+$('scale').onclick = playScale;
+$('ph1').onclick = () => playPhrase(PH1, false);
+$('ph2').onclick = () => playPhrase(PH2, false);
+$('ph1s').onclick = () => playPhrase(PH1, true);
+$('ph2s').onclick = () => playPhrase(PH2, true);
+$('stop').onclick = stopAll;
+$('copy').onclick = async () => { try { await navigator.clipboard.writeText($('code').value); status('код скопирован'); } catch (e) { $('code').select(); status('выдели текст и скопируй вручную'); } };
+
+// ?test=1: офлайн-рендер нот, уровень и измеренная высота в строке статуса
+async function selfTest() {
+  const out = [];
+  for (const name of Object.keys(PRESETS)) {
+    Object.assign(P, PRESETS[name]); await calibrate();
+    for (const m of [57, 64, 69, 76, 81, 83]) {
+      const sr = 44100, oc = new OfflineAudioContext(1, sr, sr), g = oc.createGain(); g.connect(oc.destination);
+      meow(m2f(m), 0, 0.4, { c: oc, out: g, noise: noiseFor(oc), waves: {} });
+      const x = (await oc.startRendering()).getChannelData(0);
+      let pk = 0; for (const v of x) pk = Math.max(pk, Math.abs(v));
+      const a = Math.floor(0.12 * sr), n = Math.floor(0.12 * sr); let rms = 0; for (let i = 0; i < n; i++) rms += x[a + i] ** 2; rms = Math.sqrt(rms / n);
+      const lo = Math.floor(sr / 1200), hi = Math.floor(sr / 150), r = [];
+      for (let L = lo; L <= hi; L++) { let s = 0; for (let i = 0; i < n; i++) s += x[a + i] * x[a + i + L]; r.push(s); }
+      const mx = Math.max(...r); const L = r.findIndex((v, i) => v > mx * 0.9 && (i === 0 || v >= r[i - 1]) && v >= (r[i + 1] ?? -1e9)) + lo;
+      const cents = Math.round(1200 * Math.log2(sr / L / m2f(m)));
+      out.push(`${name}/${label(m)}: pk ${pk.toFixed(2)} rms ${rms.toFixed(3)} ${cents >= 0 ? '+' : ''}${cents}c`);
+    }
+  }
+  $('start').style.display = 'none'; document.body.insertAdjacentHTML('beforeend', '<pre id="test">' + out.join('\n') + '</pre>');
+  status('test done');
+}
+
+drawKb(); drawPresets(); drawKnobs(); save();
+if (location.search.includes('test=1')) selfTest().catch(e => status('test: ' + e.message, true));
+</script>
+</body>
+</html>
